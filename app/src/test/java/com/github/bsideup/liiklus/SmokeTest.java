@@ -123,4 +123,64 @@ public class SmokeTest extends AbstractIntegrationTest {
                     assertThat(it.getValue().toStringUtf8()).as("value").isEqualTo(value);
                 });
     }
+
+    @Test
+    public void testTwoTopicsCrash() {
+        String groupName = "MyGroup";
+        var subscribeAction1 = SubscribeRequest.newBuilder()
+                .setTopic("FOO")
+                .setGroup(groupName)
+                .setAutoOffsetReset(SubscribeRequest.AutoOffsetReset.EARLIEST)
+                .build();
+        var subscribeAction2 = SubscribeRequest.newBuilder()
+                .setTopic("BAR")
+                .setGroup(groupName)
+                .setAutoOffsetReset(SubscribeRequest.AutoOffsetReset.EARLIEST)
+                .build();
+
+        var value = UUID.randomUUID().toString();
+        var recordsStorage = applicationContext.getBean(RecordsStorage.class);
+        recordsStorage.publish(new RecordsStorage.Envelope(
+                subscribeAction1.getTopic(),
+                null, // intentionally
+                ByteBuffer.wrap(value.getBytes(StandardCharsets.UTF_8))
+        )).toCompletableFuture().join();
+
+        recordsStorage.publish(new RecordsStorage.Envelope(
+                subscribeAction2.getTopic(),
+                null, // intentionally
+                ByteBuffer.wrap(value.getBytes(StandardCharsets.UTF_8))
+        )).toCompletableFuture().join();
+
+        var record1 = stub
+                .subscribe(subscribeAction1)
+                .flatMap(it -> stub.receive(
+                        ReceiveRequest.newBuilder()
+                                .setAssignment(it.getAssignment())
+                                .build()
+                ))
+                .map(ReceiveReply::getRecord)
+                .blockFirst(Duration.ofSeconds(10));
+
+        var record2 = stub
+                .subscribe(subscribeAction2)
+                .flatMap(it -> stub.receive(
+                        ReceiveRequest.newBuilder()
+                                .setAssignment(it.getAssignment())
+                                .build()
+                ))
+                .map(ReceiveReply::getRecord)
+                .blockFirst(Duration.ofSeconds(10));
+
+        assertThat(record1)
+                .isNotNull()
+                .satisfies(it -> {
+                    assertThat(it.getValue().toStringUtf8()).as("value").isEqualTo(value);
+                });
+        assertThat(record2)
+                .isNotNull()
+                .satisfies(it -> {
+                    assertThat(it.getValue().toStringUtf8()).as("value").isEqualTo(value);
+                });
+    }
 }
